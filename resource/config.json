@@ -1,0 +1,22 @@
+{
+  "url": "https://x.com/elonmusk",
+  "proxy": {
+    "type": "socks5",
+    "host": "127.0.0.1",
+    "port": 7890,
+    "user": "",
+    "password": ""
+  },
+  "json_payload": {
+    "group_id": "",
+    "message": [
+      {
+        "type": "text",
+        "data": {
+          "text": ""
+        }
+      }
+    ]
+  },
+  "auth_token": ""
+}
