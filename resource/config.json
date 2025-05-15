@@ -7,16 +7,7 @@
     "user": "",
     "password": ""
   },
-  "json_payload": {
-    "group_id": "",
-    "message": [
-      {
-        "type": "text",
-        "data": {
-          "text": ""
-        }
-      }
-    ]
-  },
-  "auth_token": ""
+  "qq_group_id": "",
+  "auth_token": "",
+  "push_url": "http://192.168.137.1:3000/send_group_msg"
 }
