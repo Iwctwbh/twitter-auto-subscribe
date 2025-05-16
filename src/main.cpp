@@ -12,18 +12,17 @@
 #include <QDateTime>
 #include <ranges>
 #include <filesystem>
-#include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QEventLoop>
-#include <QFile>
-#include <QDir>
 
 #pragma execution_character_set("utf-8")
 
-std::string sanitize_filename(const std::string& s) {
+std::string sanitize_filename(const std::string& s)
+{
 	std::string result = s;
-	for (char& c : result) {
+	for (char& c : result)
+	{
 		if (c == ':' || c == ' ' || c == '/' || c == '\\' ||
 			c == '*' || c == '?' || c == '"' || c == '<' ||
 			c == '>' || c == '|')
@@ -32,15 +31,19 @@ std::string sanitize_filename(const std::string& s) {
 	return result;
 }
 
-void post_message(const nlohmann::json& config, const nlohmann::json& json_payload) {
+void post_message(const nlohmann::json& config, const nlohmann::json& json_payload)
+{
 	cpr::Response response = cpr::Post(
 		cpr::Url{ config["push_url"].get<std::string>() },
 		cpr::Header{ {"Content-Type", "application/json"} },
 		cpr::Body{ json_payload.dump() }
 	);
-	if (response.status_code == 200) {
+	if (response.status_code == 200)
+	{
 		qDebug() << "Response: " << response.text << "\n";
-	} else {
+	}
+	else
+	{
 		qDebug() << "Error: " << response.status_code << " - " << QString::fromLocal8Bit(response.error.message) << "\n";
 	}
 }
@@ -131,8 +134,9 @@ int main(int argc, char* argv[])
 	}
 
 	web_view.resize(960, 540);
-	web_view.show();
-	web_view.setZoomFactor(0.5);
+	// web_view.show();
+	// web_view.hide();
+	web_view.setZoomFactor(0.25);
 	web_view.load(url);
 
 	/*QWebEngineView dev_tools;
@@ -158,9 +162,13 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	QObject::connect(page, &QWebEnginePage::loadFinished, [&web_view, page, timer, config, &last_time](const bool ok)
+	nlohmann::json json_payload;
+	json_payload["group_id"] = config["qq_group_id"];
+
+	QObject::connect(page, &QWebEnginePage::loadFinished, [&web_view, page, timer, config, &last_time, &json_payload](const bool ok)
 		{
-			if (!ok) {
+			if (!ok)
+			{
 				qDebug() << "loading failed";
 				return;
 			}
@@ -169,14 +177,15 @@ int main(int argc, char* argv[])
 			if (timerConn)
 				QObject::disconnect(timerConn);
 
-			timerConn = QObject::connect(timer, &QTimer::timeout, [page, timer, config, &last_time]()
+			timerConn = QObject::connect(timer, &QTimer::timeout, [page, timer, config, &last_time, &json_payload]()
 				{
 					std::string script =
-							R"((function() {    const items = document.querySelectorAll("section div div div[data-testid='cellInnerDiv']");    if (items.length === 0) {        return null;    }    const formatTime = (timeStr) => {        const date = new Date(timeStr);        const pad = (num) => String(num).padStart(2, '0');        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;    };    const getItemData = (item) => {        const time = item.querySelector("time")?.getAttribute("datetime");        const username = item.querySelector("span")?.textContent;        let content = item.querySelector("div[data-testid='tweetText']")?.textContent;        let type = "text";        if (!content || content.trim() === "") {            const videoPoster = item.querySelector("article img[alt='嵌入式视频']")?.getAttribute("src");            if (videoPoster) {                content = videoPoster;                type = "video";            } else {                const imageSrc = item.querySelector("img")?.getAttribute("src");                if (imageSrc) {                    content = "";                    type = "image";                } else {                    content = "";                }            }        }        const rect = item.getBoundingClientRect();        if (time && username && rect) {            return {                time: formatTime(time),                username,                content,                type,                rect: {                    left: rect.left,                    top: rect.top,                    width: rect.width,                    height: rect.height                }            };        }        return null;    };    const results = [];    items.forEach(item => {        const data = getItemData(item);        if (data) {            results.push(data);        }    });    return results.length > 0 ? JSON.stringify(results) : null;})())";
-						page->runJavaScript(QString::fromLocal8Bit(script.c_str(), script.size()),
-						[timer, config, &last_time](const QVariant& result)
+						R"((function () {    const items = document.querySelectorAll("section div div div[data-testid='cellInnerDiv']");    if (items.length === 0) {        return null;    }    const formatTime = (timeStr) => {        const date = new Date(timeStr);        const pad = (num) => String(num).padStart(2, '0');        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;    };    function replaceEmojiImgWithAlt(node) {        const clone = node.cloneNode(true);        Array.from(clone.querySelectorAll('img[alt]')).filter(img => {            const alt = img.getAttribute('alt');            return alt && (alt.length === 2 || alt.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/));        }).forEach(img => {            const emoji = img.getAttribute('alt') || '';            const textNode = document.createTextNode(emoji);            img.parentNode.replaceChild(textNode, img);        });        return clone.textContent ? clone.textContent.trim() : '';    }    const getItemData = (item) => {        const time = item.querySelector("time")?.getAttribute("datetime");        let username = '';        const usernameNode = item.querySelector("span");        if (usernameNode) {            username = replaceEmojiImgWithAlt(usernameNode);        }        const textNodes = item.querySelectorAll("div[data-testid='tweetText']");        const textArr = [];        textNodes.forEach(node => {            const text = replaceEmojiImgWithAlt(node);            if (text && text.trim()) {                textArr.push(text.trim());            }        });        const imageNodes = item.querySelectorAll("img[alt='图像']");        const imageArr = [];        imageNodes.forEach(node => {            const src = node.getAttribute("src");            if (src) {                imageArr.push(src);            }        });        const videoNodes = item.querySelectorAll("article img[alt='嵌入式视频']");        const videoArr = [];        videoNodes.forEach(node => {            const src = node.getAttribute("src");            if (src) {                videoArr.push(src);            }        });        const content = {};        if (textArr.length) content.text = textArr;        if (videoArr.length) content.video = videoArr;        if (imageArr.length) content.image = imageArr;        if (time && username && Object.keys(content).length > 0) {            return {                time: formatTime(time),                username,                content            };        }        return null;    };    const results = [];    items.forEach(item => {        const data = getItemData(item);        if (data) {            results.push(data);        }    });    return results.length > 0 ? JSON.stringify(results) : null;})())";
+					page->runJavaScript(QString::fromLocal8Bit(script.c_str(), script.size()),
+						[timer, config, &last_time, &json_payload](const QVariant& result)
 						{
-							if (result.isNull()) {
+							if (result.isNull())
+							{
 								qDebug() << "JavaScript no return, retry";
 								return;
 							}
@@ -210,70 +219,108 @@ int main(int argc, char* argv[])
 									<< " "
 									<< "JavaScript return:"
 									<< msg["time"].get<std::string>()
-									<< msg["username"].get<std::string>()
-									<< msg["content"].get<std::string>();
+									<< msg["username"].get<std::string>();
 
-								nlohmann::json json_payload;
-								const std::string& type = msg["type"].get<std::string>();
+								const auto& content = msg["content"];
 
-								if (type == "video")
+								if (content.contains("text"))
 								{
-									const std::string& url = msg["content"].get<std::string>();
-									if (!url.empty())
+									for (const auto& text : content["text"])
 									{
-										qDebug() << "download_url: " << url;
-										std::filesystem::create_directories("download");
-										std::string filename = "download/" + sanitize_filename(msg["time"].get<std::string>() + "_" + msg["username"].get<std::string>() + ".jpg");
-
-										QNetworkAccessManager manager;
-										QNetworkRequest request(QUrl(QString::fromStdString(url)));
-										QNetworkReply* reply = manager.get(request);
-
-										QEventLoop loop;
-										QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-										loop.exec();
-
-										if (reply->error() == QNetworkReply::NoError)
-										{
-											QByteArray imageData = reply->readAll();
-											QString base64String = imageData.toBase64();
-											std::string base64StringStd = base64String.toLocal8Bit().constData();
-											qDebug() << base64StringStd;
-
-											json_payload["group_id"] = config["qq_group_id"];
-											json_payload["message"] = {
-												{
-													{"type", "text"},
-													{"data", {{"text", msg["time"].get<std::string>() + "\n" + msg["username"].get<std::string>()}}}
-												}
-											};
-											post_message(config, json_payload);
-
-											json_payload["message"] = {
-												{
-													{"type", "image"},
-													{"data", {{"file", "base64://" + base64StringStd}}}
-												}
-											};
-											post_message(config, json_payload);
-										}
-										else
-										{
-											qDebug() << "Failed to download:" << QString::fromStdString(url) << reply->errorString();
-										}
-										reply->deleteLater();
+										json_payload["message"] = {
+											{
+												{"type", "text"},
+												{"data", {{"text", msg["time"].get<std::string>() + "\n" + msg["username"].get<std::string>() + "\n" + text.get<std::string>()}}}
+											}
+										};
+										post_message(config, json_payload);
 									}
 								}
-								else
+
+								if (content.contains("video"))
 								{
-									json_payload["group_id"] = config["qq_group_id"];
-									json_payload["message"] = {
+									for (const auto& url_json : content["video"])
+									{
+										std::string url = url_json.get<std::string>();
+										if (!url.empty())
 										{
-											{"type", "text"},
-											{"data", {{"text", msg["time"].get<std::string>() + "\n" + msg["username"].get<std::string>() + "\n" + msg["content"].get<std::string>()}}}
+											qDebug() << "download_url: " << url;
+											std::filesystem::create_directories("download");
+											std::string filename = "download/" + sanitize_filename(msg["time"].get<std::string>() + "_" + msg["username"].get<std::string>() + ".jpg");
+
+											QNetworkAccessManager manager;
+											QNetworkRequest request(QUrl(QString::fromStdString(url)));
+											QNetworkReply* reply = manager.get(request);
+
+											QEventLoop loop;
+											QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+											loop.exec();
+
+											if (reply->error() == QNetworkReply::NoError)
+											{
+												QByteArray imageData = reply->readAll();
+												QString base64String = imageData.toBase64();
+												std::string base64StringStd = base64String.toLocal8Bit().constData();
+												qDebug() << base64StringStd;
+
+												json_payload["message"] = {
+													{
+														{"type", "image"},
+														{"data", {{"file", "base64://" + base64StringStd}}}
+													}
+												};
+												post_message(config, json_payload);
+											}
+											else
+											{
+												qDebug() << "Failed to download:" << QString::fromStdString(url) << reply->errorString();
+											}
+											reply->deleteLater();
 										}
-									};
-									post_message(config, json_payload);
+									}
+								}
+
+								if (content.contains("image"))
+								{
+									for (const auto& url_json : content["image"])
+									{
+										std::string url = url_json.get<std::string>();
+										if (!url.empty())
+										{
+											qDebug() << "download_url: " << url;
+											std::filesystem::create_directories("download");
+											std::string filename = "download/" + sanitize_filename(msg["time"].get<std::string>() + "_" + msg["username"].get<std::string>() + ".jpg");
+
+											QNetworkAccessManager manager;
+											QNetworkRequest request(QUrl(QString::fromStdString(url)));
+											QNetworkReply* reply = manager.get(request);
+
+											QEventLoop loop;
+											QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+											loop.exec();
+
+											if (reply->error() == QNetworkReply::NoError)
+											{
+												QByteArray imageData = reply->readAll();
+												QString base64String = imageData.toBase64();
+												std::string base64StringStd = base64String.toLocal8Bit().constData();
+												qDebug() << base64StringStd;
+
+												json_payload["message"] = {
+													{
+														{"type", "image"},
+														{"data", {{"file", "base64://" + base64StringStd}}}
+													}
+												};
+												post_message(config, json_payload);
+											}
+											else
+											{
+												qDebug() << "Failed to download:" << QString::fromStdString(url) << reply->errorString();
+											}
+											reply->deleteLater();
+										}
+									}
 								}
 
 								last_time = msg["time"].get<std::string>();
@@ -315,7 +362,6 @@ int main(int argc, char* argv[])
 		{
 			qDebug() << "Keep alive request";
 			nlohmann::json json_payload;
-			json_payload["group_id"] = config["qq_group_id"];
 			json_payload["message"] = {
 				{
 					{"type", "text"},
