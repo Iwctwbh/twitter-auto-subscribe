@@ -1,7 +1,7 @@
 add_rules("mode.debug", "mode.release")
 
 add_requires("cpr 1.10.5", {alias = "cpr"}, {configs = {vs_runtime = "MT"}})
-add_requires("vcpkg::nlohmann-json", {alias = "nlohmann"})
+add_requires("nlohmann-json", {alias = "nlohmann"})
 
 target("twitter-auto-subscribe")
     set_encodings("utf-8")
@@ -18,6 +18,14 @@ target("twitter-auto-subscribe")
     add_frameworks("QtCore", "QtGui", "QtWidgets", "QtWebEngineWidgets", "QtWebEngineCore", "QtQml", "QtNetwork")
 
     add_packages("cpr", "nlohmann")
+
+    if is_mode("debug") then
+        add_defines("DEBUG")
+    end
+
+    if is_mode("release") then
+        add_defines("RELEASE")
+    end
 
 --
 -- If you want to known more usage about xmake, please see https://xmake.io

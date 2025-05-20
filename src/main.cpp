@@ -1,4 +1,6 @@
-#define QT_NO_DEBUG_OUTPUT
+#ifdef RELEASE
+	#define QT_NO_DEBUG_OUTPUT
+#endif
 
 #include <fstream>
 #include <QApplication>
@@ -18,10 +20,65 @@
 #include <QNetworkReply>
 #include <QEventLoop>
 #include <random>
+#include <deque>
+#include <unordered_set>
+#include <queue>
+#include <functional>
 
 #pragma execution_character_set("utf-8")
 
-std::string sanitize_filename(const std::string& s)
+/**
+ * 封装下载过程
+ */
+static QByteArray downloadFile(const QString& url)
+{
+	static QNetworkAccessManager manager;
+	QNetworkRequest request(url);
+	QNetworkReply* reply = manager.get(request);
+
+	QEventLoop loop;
+	QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+	loop.exec();
+
+	QByteArray data;
+	if (reply->error() == QNetworkReply::NoError)
+	{
+		data = reply->readAll();
+	}
+	else
+	{
+		qDebug() << "Failed to download:" << url << reply->errorString();
+	}
+	reply->deleteLater();
+	return data;
+}
+
+/**
+ * 将下载的二进制数据转换为 Base64 后发送
+ */
+static void sendBase64Image(const nlohmann::json& config,
+                            nlohmann::json& json_payload,
+                            const QByteArray& imgData)
+{
+	QString base64String = imgData.toBase64();
+	std::string base64StringStd = base64String.toLocal8Bit().constData();
+	json_payload["message"] = {
+		{
+			{"type", "image"},
+			{
+				"data",
+				{
+					{"file", "base64://" + base64StringStd}
+				}
+			}
+		}
+	};
+	// 复用已有的发送逻辑
+	extern void post_message(const nlohmann::json&, const nlohmann::json&);
+	post_message(config, json_payload);
+}
+
+static std::string sanitize_filename(const std::string& s)
 {
 	std::string result = s;
 	for (char& c : result)
@@ -69,8 +126,8 @@ void post_message(const nlohmann::json& config, const nlohmann::json& json_paylo
 			}
 			else
 			{
-				qDebug() << "Error: " << response.status_code << " - " << QString::fromLocal8Bit(response.error.message) <<
-					"\n";
+				qDebug() << "Error: " << response.status_code << " - "
+					<< QString::fromLocal8Bit(response.error.message) << "\n";
 			}
 
 			if (!msg_queue.empty())
@@ -115,7 +172,8 @@ int main(int argc, char* argv[])
 	}
 
 	const auto& proxy_config = config["proxy"];
-	const std::string proxy_host = proxy_config["host"].is_null() ? "" : proxy_config["host"].get<std::string>();
+	const std::string proxy_host =
+		proxy_config["host"].is_null() ? "" : proxy_config["host"].get<std::string>();
 
 	if (proxy_host.empty())
 	{
@@ -161,8 +219,8 @@ int main(int argc, char* argv[])
 	QWebEngineProfile* profile = web_view.page()->profile();
 	QWebEngineCookieStore* cookie_store = profile->cookieStore();
 
-	if (!config.contains("auth_token") || config["auth_token"].is_null() || config["auth_token"].get<std::string>().
-		empty())
+	if (!config.contains("auth_token") || config["auth_token"].is_null() ||
+		config["auth_token"].get<std::string>().empty())
 	{
 		qDebug() << "Invalid config: Missing auth_token";
 		return -1;
@@ -227,7 +285,7 @@ int main(int argc, char* argv[])
 	json_payload["group_id"] = config["qq_group_id"];
 
 	QObject::connect(page, &QWebEnginePage::loadFinished,
-		[&web_view, page, timer, config, &time_set, &time_queue, &json_payload](const bool ok)
+		[&web_view, page, timer, config, &time_set, &time_queue, &json_payload](bool ok)
 		{
 			if (!ok)
 			{
@@ -244,22 +302,19 @@ int main(int argc, char* argv[])
 				{
 					std::string script =
 						R"((function () {    const items = document.querySelectorAll("section div div div[data-testid='cellInnerDiv']");    if (items.length === 0) {        return null;    }    const formatTime = (timeStr) => {        const date = new Date(timeStr);        const pad = (num) => String(num).padStart(2, '0');        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;    };    function replaceEmojiImgWithAlt(node) {        const clone = node.cloneNode(true);        Array.from(clone.querySelectorAll('img[alt]')).filter(img => {            const alt = img.getAttribute('alt');            return alt && (alt.length === 2 || alt.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/));        }).forEach(img => {            const emoji = img.getAttribute('alt') || '';            const textNode = document.createTextNode(emoji);            img.parentNode.replaceChild(textNode, img);        });        return clone.textContent ? clone.textContent.trim() : '';    }    const getItemData = (item) => {        const time = item.querySelector("time")?.getAttribute("datetime");        let username = '';        const usernameNode = item.querySelector("span");        if (usernameNode) {            username = replaceEmojiImgWithAlt(usernameNode);        }        const textNodes = item.querySelectorAll("div[data-testid='tweetText']");        const textArr = [];        textNodes.forEach(node => {            const text = replaceEmojiImgWithAlt(node);            if (text && text.trim()) {                textArr.push(text.trim());            }        });        const imageNodes = item.querySelectorAll("img[alt='图像']");        const imageArr = [];        imageNodes.forEach(node => {            let src = node.getAttribute("src");            if (src) {                src = src.replace(/name=[^&]+$/, "name=large");                imageArr.push(src);            }        });        const videoNodes = item.querySelectorAll("article img[alt='嵌入式视频']");        const videoArr = [];        videoNodes.forEach(node => {            let src = node.getAttribute("src");            if (src) {                src = src.replace(/name=[^&]+$/, "name=large");                videoArr.push(src);            }        });        const content = {};        if (textArr.length) content.text = textArr;        if (videoArr.length) content.video = videoArr;        if (imageArr.length) content.image = imageArr;        if (time && username && Object.keys(content).length > 0) {            return {                time: formatTime(time),                username,                content            };        }        return null;    };    const results = [];    items.forEach(item => {        const data = getItemData(item);        if (data) {            results.push(data);        }    });    return results.length > 0 ? JSON.stringify(results.reverse()) : null;})())";
+
 					page->runJavaScript(
 						QString::fromLocal8Bit(script.c_str(), script.size()),
-						[timer, config, &time_set, &time_queue, &json_payload](
-							const QVariant& result)
+						[timer, config, &time_set, &time_queue, &json_payload](const QVariant& result)
 						{
 							if (result.isNull())
 							{
 								qDebug() << "JavaScript no return, retry";
 								return;
 							}
-							qDebug() <<
-								"-------------------------------------------------------------------------------";
-							qDebug() << "JavaScript return:" << result.toString().
-								toUtf8().constData();
-							qDebug() <<
-								"-------------------------------------------------------------------------------";
+							qDebug() << "-------------------------------------------------------------------------------";
+							qDebug() << "JavaScript return:" << result.toString().toUtf8().constData();
+							qDebug() << "-------------------------------------------------------------------------------";
 
 							nlohmann::json current_result = nlohmann::json::parse(
 								result.toString().toUtf8().constData(), nullptr,
@@ -271,28 +326,25 @@ int main(int argc, char* argv[])
 							std::vector<nlohmann::json> filtered_msgs;
 							for (const auto& msg : current_result)
 							{
-								if (!time_set.contains(
-									msg["time"].get<std::string>()))
+								if (!time_set.contains(msg["time"].get<std::string>()))
 								{
 									filtered_msgs.push_back(msg);
-									time_queue.push_front(
-										msg["time"].get<std::string>());
-									time_set.insert(
-										msg["time"].get<std::string>());
+									time_queue.push_front(msg["time"].get<std::string>());
+									time_set.insert(msg["time"].get<std::string>());
 								}
 							}
 
 							for (auto& msg : filtered_msgs)
 							{
-								qDebug() << QDateTime::currentDateTime().toString(
-									"yyyy-MM-dd HH:mm:ss")
+								qDebug() << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
 									<< " "
 									<< "JavaScript return:"
-									<< msg["time"].get<std::string>()
-									<< msg["username"].get<std::string>();
+									<< msg["time"].get<std::string>().c_str()
+									<< msg["username"].get<std::string>().c_str();
 
 								const auto& content = msg["content"];
 
+								// 发送文本
 								if (content.contains("text"))
 								{
 									for (const auto& text : content["text"])
@@ -305,12 +357,11 @@ int main(int argc, char* argv[])
 													{
 														{
 															"text",
-															msg["time"].get<
-																std::string>() +
-															"\n" + msg["username"]
-															.get<std::string>() +
-															"\n" + text.get<
-																std::string>()
+															msg["time"].get<std::string>()
+															+ "\n"
+															+ msg["username"].get<std::string>()
+															+ "\n"
+															+ text.get<std::string>()
 														}
 													}
 												}
@@ -320,6 +371,7 @@ int main(int argc, char* argv[])
 									}
 								}
 
+								// 下载并发送视频缩略图
 								if (content.contains("video"))
 								{
 									for (const auto& url_json : content["video"])
@@ -327,68 +379,25 @@ int main(int argc, char* argv[])
 										auto url = url_json.get<std::string>();
 										if (!url.empty())
 										{
-											qDebug() << "download_url: " << url;
-											std::filesystem::create_directories(
-												"download");
+											qDebug() << "download_url: " << url.c_str();
+											std::filesystem::create_directories("download");
+
 											std::string filename = "download/" +
-												sanitize_filename(
-													msg["time"].get<std::string>()
-													+ "_" + msg["username"].get<
-													std::string>() + ".jpg");
+												sanitize_filename(msg["time"].get<std::string>()
+													+ "_"
+													+ msg["username"].get<std::string>()
+													+ ".jpg");
 
-											QNetworkAccessManager manager;
-											QNetworkRequest request(
-												QUrl(QString::fromStdString(
-													url)));
-											QNetworkReply* reply = manager.get(
-												request);
-
-											QEventLoop loop;
-											QObject::connect(
-												reply, &QNetworkReply::finished,
-												&loop, &QEventLoop::quit);
-											loop.exec();
-
-											if (reply->error() ==
-												QNetworkReply::NoError)
+											QByteArray data = downloadFile(QString::fromStdString(url));
+											if (!data.isEmpty())
 											{
-												QByteArray imageData = reply->
-													readAll();
-												QString base64String = imageData.
-													toBase64();
-												std::string base64StringStd =
-													base64String.toLocal8Bit().
-													constData();
-												qDebug() << base64StringStd;
-
-												json_payload["message"] = {
-													{
-														{"type", "image"},
-														{
-															"data",
-															{
-																{
-																	"file",
-																	"base64://" +
-																	base64StringStd
-																}
-															}
-														}
-													}
-												};
-												post_message(
-													config, json_payload);
+												sendBase64Image(config, json_payload, data);
 											}
-											else
-											{
-												qDebug() << "Failed to download:"
-													<< QString::fromStdString(url) << reply->errorString();
-											}
-											reply->deleteLater();
 										}
 									}
 								}
 
+								// 下载并发送图片
 								if (content.contains("image"))
 								{
 									for (const auto& url_json : content["image"])
@@ -396,64 +405,20 @@ int main(int argc, char* argv[])
 										auto url = url_json.get<std::string>();
 										if (!url.empty())
 										{
-											qDebug() << "download_url: " << url;
-											std::filesystem::create_directories(
-												"download");
+											qDebug() << "download_url: " << url.c_str();
+											std::filesystem::create_directories("download");
+
 											std::string filename = "download/" +
-												sanitize_filename(
-													msg["time"].get<std::string>()
-													+ "_" + msg["username"].get<
-													std::string>() + ".jpg");
+												sanitize_filename(msg["time"].get<std::string>()
+													+ "_"
+													+ msg["username"].get<std::string>()
+													+ ".jpg");
 
-											QNetworkAccessManager manager;
-											QNetworkRequest request(
-												QUrl(QString::fromStdString(
-													url)));
-											QNetworkReply* reply = manager.get(
-												request);
-
-											QEventLoop loop;
-											QObject::connect(
-												reply, &QNetworkReply::finished,
-												&loop, &QEventLoop::quit);
-											loop.exec();
-
-											if (reply->error() ==
-												QNetworkReply::NoError)
+											QByteArray data = downloadFile(QString::fromStdString(url));
+											if (!data.isEmpty())
 											{
-												QByteArray imageData = reply->
-													readAll();
-												QString base64String = imageData.
-													toBase64();
-												std::string base64StringStd =
-													base64String.toLocal8Bit().
-													constData();
-												qDebug() << base64StringStd;
-
-												json_payload["message"] = {
-													{
-														{"type", "image"},
-														{
-															"data",
-															{
-																{
-																	"file",
-																	"base64://" +
-																	base64StringStd
-																}
-															}
-														}
-													}
-												};
-												post_message(
-													config, json_payload);
+												sendBase64Image(config, json_payload, data);
 											}
-											else
-											{
-												qDebug() << "Failed to download:"
-													<< QString::fromStdString(url) << reply->errorString();
-											}
-											reply->deleteLater();
 										}
 									}
 								}
@@ -462,8 +427,7 @@ int main(int argc, char* argv[])
 							std::ofstream last_time_file("time.txt");
 							if (last_time_file.is_open())
 							{
-								for (const auto& time : time_queue |
-									std::views::take(50))
+								for (const auto& time : time_queue | std::views::take(50))
 								{
 									last_time_file << time << "\n";
 								}
@@ -476,14 +440,13 @@ int main(int argc, char* argv[])
 							timer->stop();
 						});
 				});
-			timer->start(5000);
+			timer->start(10000);
 		});
 
 	auto refresh_timer = new QTimer(&web_view);
 	QObject::connect(refresh_timer, &QTimer::timeout, [&web_view, url]()
 		{
 			qDebug() << "Refreshing page";
-
 			web_view.load(url);
 		});
 	refresh_timer->start(60000);
@@ -501,7 +464,7 @@ int main(int argc, char* argv[])
 			};
 			post_message(config, json_payload);
 		});
-	keep_alive_timer->start(600000);
+	// keep_alive_timer->start(600000);
 
 	return QApplication::exec();
 }
