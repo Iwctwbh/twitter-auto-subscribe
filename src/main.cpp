@@ -27,9 +27,6 @@
 
 #pragma execution_character_set("utf-8")
 
-/**
- * 封装下载过程
- */
 static QByteArray downloadFile(const QString& url)
 {
 	static QNetworkAccessManager manager;
@@ -53,9 +50,6 @@ static QByteArray downloadFile(const QString& url)
 	return data;
 }
 
-/**
- * 将下载的二进制数据转换为 Base64 后发送
- */
 static void sendBase64Image(const nlohmann::json& config,
                             nlohmann::json& json_payload,
                             const QByteArray& imgData)
@@ -73,7 +67,7 @@ static void sendBase64Image(const nlohmann::json& config,
 			}
 		}
 	};
-	// 复用已有的发送逻辑
+	
 	extern void post_message(const nlohmann::json&, const nlohmann::json&);
 	post_message(config, json_payload);
 }
@@ -344,7 +338,6 @@ int main(int argc, char* argv[])
 
 								const auto& content = msg["content"];
 
-								// 发送文本
 								if (content.contains("text"))
 								{
 									for (const auto& text : content["text"])
@@ -371,7 +364,6 @@ int main(int argc, char* argv[])
 									}
 								}
 
-								// 下载并发送视频缩略图
 								if (content.contains("video"))
 								{
 									for (const auto& url_json : content["video"])
@@ -397,7 +389,6 @@ int main(int argc, char* argv[])
 									}
 								}
 
-								// 下载并发送图片
 								if (content.contains("image"))
 								{
 									for (const auto& url_json : content["image"])
